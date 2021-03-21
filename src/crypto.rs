@@ -1,44 +1,49 @@
 use aes_gcm::{
-    aead::{
-        generic_array::{typenum::U12, GenericArray},
-        Aead, NewAead,
-    },
+    aead::{generic_array::GenericArray, Aead, NewAead},
     Aes256Gcm,
 };
-use lazy_static::lazy_static;
 use rand_core::{OsRng, RngCore};
-use x25519_dalek::{PublicKey, StaticSecret};
+use x25519_dalek::{PublicKey, SharedSecret, StaticSecret};
 
-lazy_static! {
-    static ref ECDH_SK: StaticSecret = StaticSecret::new(OsRng);
-    pub static ref ECDH_PK: PublicKey = PublicKey::from(&*ECDH_SK);
+#[derive(Clone)]
+pub struct SecretKey(StaticSecret);
+
+impl SecretKey {
+    pub fn generate() -> Self {
+        Self(StaticSecret::new(OsRng))
+    }
+
+    pub fn compute_public_key(&self) -> PublicKey {
+        PublicKey::from(&self.0)
+    }
+
+    pub fn diffie_hellman(&self, other: &PublicKey) -> SharedSecret {
+        self.0.diffie_hellman(other)
+    }
 }
 
-pub struct SymmetricCipher {
-    nonce: GenericArray<u8, U12>,
-    cipher: Aes256Gcm,
-}
+pub struct SharedCipher(Aes256Gcm);
 
-impl SymmetricCipher {
-    pub fn new(other_key: [u8; 32], nonce: [u8; 12]) -> Self {
-        let other_key = PublicKey::from(other_key);
+impl SharedCipher {
+    pub fn new(my_secret: &SecretKey, other_public: [u8; 32]) -> Self {
+        let other_public = PublicKey::from(other_public);
 
-        let nonce = *GenericArray::from_slice(&nonce);
-
-        let shared_key = ECDH_SK.diffie_hellman(&other_key).to_bytes();
+        let shared_key = my_secret.diffie_hellman(&other_public).to_bytes();
         let shared_key = GenericArray::from_slice(&shared_key);
 
         let cipher = Aes256Gcm::new(&shared_key);
 
-        SymmetricCipher { nonce, cipher }
+        SharedCipher(cipher)
     }
 
-    pub fn encrypt(&self, pt: Vec<u8>) -> Vec<u8> {
-        self.cipher.encrypt(&self.nonce, pt.as_ref()).unwrap()
+    pub fn encrypt(&self, nonce: [u8; 12], pt: Vec<u8>) -> Vec<u8> {
+        let nonce = GenericArray::from_slice(&nonce);
+        self.0.encrypt(nonce, pt.as_ref()).unwrap()
     }
 
-    pub fn decrypt(&self, ct: Vec<u8>) -> Vec<u8> {
-        self.cipher.decrypt(&self.nonce, ct.as_ref()).unwrap()
+    pub fn decrypt(&self, nonce: [u8; 12], ct: Vec<u8>) -> Vec<u8> {
+        let nonce = GenericArray::from_slice(&nonce);
+        self.0.decrypt(nonce, ct.as_ref()).unwrap()
     }
 }
 

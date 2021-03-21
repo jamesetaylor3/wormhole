@@ -56,7 +56,7 @@ type ClientMap = HashMap<quiche::ConnectionId<'static>, (net::SocketAddr, Client
 
 pub fn serve<F>(hostname: [u8; 4], port: u16, handler: F)
 where
-    F: Fn(Payload) -> (u16, Vec<u8>) + Copy,
+    F: Fn(Payload) -> (u16, Vec<u8>) + Clone,
 {
     let mut buf = [0; 65535];
     let mut out = [0; MAX_DATAGRAM_SIZE];
@@ -352,7 +352,7 @@ where
                             let end_pos = body.iter().position(|&x| x == 0x0).unwrap();
                             let body = Vec::from(body.split_at(end_pos).0);
 
-                            handle_request(client, stream_id, handler, body);
+                            handle_request(client, stream_id, handler.clone(), body);
                         }
 
                         Ok((_stream_id, quiche::h3::Event::Finished)) => (),
@@ -485,7 +485,7 @@ fn validate_token<'a>(src: &net::SocketAddr, token: &'a [u8]) -> Option<quiche::
 
 fn handle_request<F>(client: &mut Client, stream_id: u64, handler: F, body: Vec<u8>)
 where
-    F: Fn(Payload) -> (u16, Vec<u8>) + Copy,
+    F: Fn(Payload) -> (u16, Vec<u8>) + Clone,
 {
     let conn = &mut client.conn;
     let http3_conn = &mut client.http3_conn.as_mut().unwrap();
@@ -536,7 +536,7 @@ where
 
 fn build_response<F>(handler: F, body: Vec<u8>) -> (Vec<quiche::h3::Header>, Vec<u8>)
 where
-    F: Fn(Payload) -> (u16, Vec<u8>),
+    F: Fn(Payload) -> (u16, Vec<u8>) + Clone,
 {
     let payload: Payload = serde_json::from_slice(&body).unwrap();
 

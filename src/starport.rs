@@ -10,7 +10,7 @@ use nom::{
 };
 use num_traits::PrimInt;
 
-use crate::crypto::{self, SymmetricCipher};
+use crate::crypto::{self, SecretKey, SharedCipher};
 use crate::hexify;
 use crate::net::server;
 use crate::net::Payload;
@@ -18,8 +18,11 @@ use crate::net::Payload;
 // will probably want to break up this module
 
 pub fn run() {
-    // broadcast the public key
-    println!("{}", hexify!(crypto::ECDH_PK.to_bytes()));
+    // generate keypair and broadcast the public key
+    let secret_key = SecretKey::generate();
+    let public_key = secret_key.compute_public_key();
+
+    println!("{}", hexify!(public_key.to_bytes()));
 
     // will need to implement threading or async
     // will also need to remodel the token
@@ -31,20 +34,23 @@ pub fn run() {
         let content = <Vec<u8>>::from_hex(payload.content).unwrap();
 
         // create a cipher from the key and nonce
-        let cipher = SymmetricCipher::new(key, nonce);
+        let cipher = SharedCipher::new(&secret_key, key);
 
         // decrypt the content
-        let content_pt = cipher.decrypt(content);
+        let content_pt = cipher.decrypt(nonce, content);
 
         // parse the content and do the next action
         let response = FlightPlan::parse(&content_pt).unwrap().1.execute();
 
         // encrypt the response
-        // TODO: make it so that we create a new nonce here
-        let body_ct = cipher.encrypt(response);
+        let nonce = crypto::generate_nonce();
+        let mut body_ct = cipher.encrypt(nonce, response);
+
+        let mut out = nonce.to_vec();
+        out.append(&mut body_ct);
 
         // return
-        (200, body_ct)
+        (200, out)
     });
 }
 
@@ -106,7 +112,7 @@ impl FlightPlan {
             "",
             Self::Terminal {
                 hostname: vec![],
-                port: port,
+                port,
                 body: vec![],
             },
         ))
@@ -129,12 +135,12 @@ impl FlightPlan {
                 stream.write(&body).unwrap();
                 let mut res = vec![0; 16 * 1024];
                 stream.read(&mut res).unwrap();
-                
+
                 // trim the unccesary zeros.
                 // this will fail if body buffer wasnt large enough
                 let end_pos = res.iter().position(|&x| x == 0x0).unwrap();
                 let res = Vec::from(res.split_at(end_pos).0);
-                
+
                 res
             }
         }

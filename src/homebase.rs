@@ -1,12 +1,14 @@
+use std::convert::TryInto;
 use std::str;
+
 use hex::FromHex;
 
-use crate::crypto::{self, SymmetricCipher};
+use crate::crypto::{self, SecretKey, SharedCipher};
 use crate::hexify;
 use crate::net::{client, Payload};
 
-const NODE_URL: &'static str = "https://127.0.0.1:4433";
-const NODE_PK: &'static str = "20b891cdf6f27dfb039301d74888b4f7bf46c6fc2bc2cc271bdd25e448f16a64";
+const NODE_URL: &str = "https://127.0.0.1:4433";
+const NODE_PK: &str = "be252fccd79ae53d279f2d7c7e8acc3f5e9ce442711f6ae38bbf5cb72388185d";
 
 pub fn run() {
     // will have a HTTP proxy listener
@@ -20,17 +22,19 @@ pub fn run() {
     let node_public = <[u8; 32]>::from_hex(NODE_PK).unwrap();
 
     let nonce = crypto::generate_nonce();
+    let secret_key = SecretKey::generate();
+    let public_key = secret_key.compute_public_key();
 
     // this assumes that we want to use a static_key for the lifetime of the proxy. we really dont. change this
     // we want to make a new ephemeral key for each request
-    let cipher = SymmetricCipher::new(node_public, nonce);
+    let cipher = SharedCipher::new(&secret_key, node_public);
 
     // encrypt the message
-    let ciphertext = cipher.encrypt(request.to_vec());
+    let ciphertext = cipher.encrypt(nonce, request.to_vec());
 
     // pack up json...
     let body = Payload {
-        key: hexify!(crypto::ECDH_PK.to_bytes()),
+        key: hexify!(public_key.to_bytes()),
         nonce: hexify!(nonce),
         content: hexify!(ciphertext),
     };
@@ -40,8 +44,9 @@ pub fn run() {
     // send it into the wormhole
     let res = client::send(NODE_URL, body);
 
-    // decrypt the response
-    let res = cipher.decrypt(res);
+    // extract the nonce and decrypt the response
+    let (nonce, res) = res.split_at(12);
+    let res = cipher.decrypt(nonce.try_into().unwrap(), res.to_vec());
 
     // present it to the user
     println!("{}", str::from_utf8(&res).unwrap());
